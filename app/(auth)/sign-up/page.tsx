@@ -1,22 +1,20 @@
+// app/sign-up/page.tsx
 'use client'
 import AuthForm from '@/components/AuthForm'
-import { register } from '@/lib/actions/auth'
+import { signUpAction } from '@/lib/auth/action'
 import { signUpSchema } from '@/lib/validations'
-import React from 'react'
 
 const SignUpPage = () => {
-  
-
   return (
-    <AuthForm type='SIGN_UP'
+    <AuthForm 
+      type='SIGN_UP'
       schema={signUpSchema}
       defaultValues={{
         username: '',
         email: '',
         password: '',
-
       }}
-      onSubmit={register}
+      onSubmit={signUpAction}
     />
   )
 }

@@ -1,32 +1,41 @@
 // auth.ts
-import NextAuth from "next-auth";
+import NextAuth, { type NextAuthConfig, type DefaultSession } from "next-auth";
 import Google from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { createOAuthAccount } from "./lib/auth/action";
 import type { OAuthUser } from "./types/auth";
 
-// Define type for backend tokens
 interface BackendTokens {
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
 }
 
-// Extended Session type
-interface ExtendedSession {
-  isAuthenticated: boolean;
-  backendTokens: BackendTokens;
-  user: {
-    id: string;
-    name?: string | null;
-    email?: string | null;
-    image?: string | null;
-  };
+// Extend DefaultSession instead of creating a new interface
+declare module "next-auth" {
+  interface Session extends DefaultSession {
+    isAuthenticated: boolean;
+    backendTokens: BackendTokens;
+    user: {
+      id: string;
+      name?: string | null;
+      email?: string | null;
+      image?: string | null;
+    };
+  }
+
+  interface User {
+    id?: string; // Changed to optional to match NextAuth's default
+    backendTokens?: BackendTokens;
+  }
+
+  interface Account {
+    backendTokens?: BackendTokens;
+  }
 }
 
-const DEFAULT_TOKEN_EXPIRATION = 1 * 60 * 60 * 1000; // 1 hour in milliseconds
+const DEFAULT_TOKEN_EXPIRATION = 1 * 60 * 60 * 1000;
 
-// Helper function to refresh backend tokens
 async function refreshBackendTokens(refreshToken: string): Promise<BackendTokens> {
   try {
     const response = await fetch(`${process.env.BACKEND_URL}/auth/refresh`, {
@@ -55,8 +64,7 @@ async function refreshBackendTokens(refreshToken: string): Promise<BackendTokens
   }
 }
 
-// Define the NextAuth configuration using the new Auth.js structure
-export const { handlers, signIn, signOut, auth } = NextAuth({
+const authConfig: NextAuthConfig = {
   providers: [
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID!,
@@ -69,12 +77,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          return null;
-        }
+        if (!credentials?.email || !credentials?.password) return null;
 
         try {
-          const response = await fetch(`${process.env.BACKEND_URL}/api/auth/signin`, {
+          const response = await fetch(`${process.env.BACKEND_URL}/auth/signin`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -84,10 +90,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           });
 
           if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            console.log("Backend error response:", errorData);
             return null;
           }
 
           const data = await response.json();
+          if (!data.access_token || !data.user?.id) return null;
+
           return {
             id: data.user.id,
             name: data.user.name || data.user.username,
@@ -102,7 +112,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             },
           };
         } catch (error) {
-          console.error("Authentication error:", error);
+          console.error("Authorize error:", error);
           return null;
         }
       },
@@ -110,9 +120,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   ],
   callbacks: {
     async signIn({ user, account, profile }) {
-      if (account?.provider === "credentials") {
-        return true;
-      }
+      if (account?.provider === "credentials") return true;
 
       if (account && profile && user.email) {
         try {
@@ -124,11 +132,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             providerAccountId: account.providerAccountId,
           };
 
-          const response = await createOAuthAccount(
-            oAuthUser,
-            account.id_token
-          );
-          
+          const response = await createOAuthAccount(oAuthUser, account.id_token);
+
           if (!response.ok) {
             console.error("Backend authentication failed:", await response.text());
             return false;
@@ -136,8 +141,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
           const data = await response.json();
           if (data.access_token && data.refresh_token) {
-            // Store tokens in the account object
-            account.backendTokens = {
+            (account as typeof account & { backendTokens: BackendTokens }).backendTokens = {
               accessToken: data.access_token,
               refreshToken: data.refresh_token,
               expiresAt: data.expires_in
@@ -155,37 +159,31 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
       return false;
     },
-
     async jwt({ token, account, user }) {
       if (account?.provider) {
         if (account.backendTokens) {
-          token.backendTokens = account.backendTokens;
+          token.backendTokens = account.backendTokens as BackendTokens;
           token.tokenUpdateTime = Date.now();
         } else if (user?.backendTokens) {
-          token.backendTokens = user.backendTokens;
+          token.backendTokens = user.backendTokens as BackendTokens;
           token.tokenUpdateTime = Date.now();
         }
       }
 
       if (token.backendTokens?.refreshToken) {
-        const shouldRefresh =
-          (token.backendTokens.expiresAt && Date.now() > token.backendTokens.expiresAt) ||
-          (token.tokenUpdateTime && Date.now() - token.tokenUpdateTime > DEFAULT_TOKEN_EXPIRATION);
-
+        const shouldRefresh = token.backendTokens.expiresAt && Date.now() > token.backendTokens.expiresAt;
         if (shouldRefresh) {
           try {
             token.backendTokens = await refreshBackendTokens(token.backendTokens.refreshToken);
-            token.tokenUpdateTime = Date.now();
           } catch (error) {
             console.error("Token refresh failed:", error);
-            delete token.backendTokens;
+            token.error = "RefreshTokenFailed";
           }
         }
       }
 
       return token;
     },
-
     async session({ session, token }) {
       if (token) {
         session.user.id = token.sub ?? "";
@@ -196,7 +194,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           expiresAt: 0,
         };
       }
-      return session as ExtendedSession;
+      return session;
     },
   },
   pages: {
@@ -205,14 +203,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   },
   session: {
     strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60, // 30 days
+    maxAge: 30 * 24 * 60 * 60,
   },
-  debug: process.env.NODE_ENV === "development",
-});
+};
 
-// Create a helper function to fetch with authentication
+export const { handlers, signIn, signOut, auth } = NextAuth(authConfig);
+
 export async function fetchWithBackendAuth(path: string, options: RequestInit = {}): Promise<Response> {
-  const session = await auth() as ExtendedSession | null;
+  const session = await auth();
   const token = session?.backendTokens?.accessToken;
 
   if (!token) {
@@ -230,6 +228,9 @@ export async function fetchWithBackendAuth(path: string, options: RequestInit = 
   if (response.status === 401 && session?.backendTokens?.refreshToken) {
     try {
       const refreshedTokens = await refreshBackendTokens(session.backendTokens.refreshToken);
+      if (session) {
+        session.backendTokens = refreshedTokens;
+      }
       const refreshedHeaders = new Headers(options.headers);
       refreshedHeaders.set("Authorization", `Bearer ${refreshedTokens.accessToken}`);
 
@@ -246,19 +247,10 @@ export async function fetchWithBackendAuth(path: string, options: RequestInit = 
   return response;
 }
 
-// Type declarations to augment Next Auth types
-declare module "next-auth" {
-  interface Session extends ExtendedSession {}
-  
-  interface User {
-    id: string;
-    backendTokens?: BackendTokens;
-  }
-}
-
 declare module "next-auth/jwt" {
   interface JWT {
-    backendTokens?: BackendTokens;
+    backendTokens: BackendTokens | undefined;
     tokenUpdateTime?: number;
+    error?: string;
   }
 }

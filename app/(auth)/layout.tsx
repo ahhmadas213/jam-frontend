@@ -3,7 +3,6 @@ import { ArrowLeft } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 import React from 'react'
-import { AuthProvider } from "@/lib/auth/AuthContext";
 import { ReactNode } from 'react';
 import { auth } from '@/auth';
 import { redirect } from 'next/navigation';
@@ -16,7 +15,6 @@ const layout = async ({ children }: { children: ReactNode }) => {
   }
 
   return (
-    <AuthProvider initialUser={null} initialIsAuthenticated={false}>
 
       <main className='auth-container '>
         <section className='auth-form bg-[#E6E0FF]'>
@@ -55,7 +53,6 @@ const layout = async ({ children }: { children: ReactNode }) => {
           />
         </section>
       </main>
-    </AuthProvider>
 
   )
 }

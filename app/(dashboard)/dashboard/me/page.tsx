@@ -1,18 +1,18 @@
 // // Example client component using the secure API proxy
 // // dashboard/me
 'use client';
-import Image from "next/image"
 
-import { auth } from "@/auth"
 // import { useEffect } from "react"
 
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
+import { signOutAction } from '@/lib/auth/action';
+
 // import { auth } from '@/auth';
 
 // Example User Profile component
 export default  function UserProfile() {
-  const { status } = useSession();
+  const { status} = useSession();
   // const session = auth()
 
   // const {user} =  auth()
@@ -110,6 +110,8 @@ export default  function UserProfile() {
           <p>Name: {userData.name}</p>
           <p>Email: {userData.email}</p>
           {/* Other profile information */}
+          <button className='p-4 border bg-red-400 rounded-full m-4'
+          onClick={signOutAction}>logout</button>
           <div>
           </div>
         </div>
